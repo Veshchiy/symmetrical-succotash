@@ -252,6 +252,13 @@ END;;
 DROP FUNCTION IF EXISTS dbms_monitor.f_threshold;;
 CREATE FUNCTION dbms_monitor.f_threshold() RETURNS INTEGER DETERMINISTIC NO SQL RETURN @threshold;;
 
+DROP FUNCTION IF EXISTS dbms_monitor.check_innodb_log_size;
+CREATE FUNCTION dbms_monitor.check_innodb_log_size()
+  RETURNS DECIMAL(8,2)
+BEGIN
+  RETURN round((@@innodb_log_files_in_group * @@innodb_log_file_size)/1024/1024, 2);
+END;
+
 DELIMITER ;
 
 DROP VIEW IF EXISTS dbms_monitor.session_wait_duration;
@@ -313,13 +320,76 @@ CREATE VIEW dbms_monitor.schema_weight_by_engine AS
 SELECT  TABLE_SCHEMA, ENGINE,
         ROUND(SUM(data_length) /1024/1024, 1) AS "Data MB",
         ROUND(SUM(data_length) /1024/1024/1024, 1) AS "Data GB",
+        ROUND(SUM(data_free) /1024/1024, 1) AS "Data_Free MB",
+        ROUND(SUM(data_free) /1024/1024/1024, 1) AS "Data_Free GB",
         ROUND(SUM(index_length)/1024/1024, 1) AS "Index MB",
         ROUND(SUM(index_length)/1024/1024/1024, 1) AS "Index GB",
-        ROUND(SUM(data_length + index_length)/1024/1024, 1) AS "Total MB",
-        ROUND(SUM(data_length + index_length)/1024/1024/1024, 1) AS "Total GB",
+        ROUND(SUM(data_length + data_free + index_length)/1024/1024, 1) AS "Total MB",
+        ROUND(SUM(data_length + data_free + index_length)/1024/1024/1024, 1) AS "Total GB",
         COUNT(*) "Num Tables"
     FROM  information_schema.TABLES
     WHERE  TABLE_SCHEMA not in ('information_schema', 'PERFORMANCE_SCHEMA', 'SYS_SCHEMA', 'mysql')
     AND table_type = 'BASE TABLE'
     GROUP BY  ENGINE, TABLE_SCHEMA
     order by 3,1,2;
+
+DROP VIEW IF EXISTS dbms_monitor.schema_weight;
+CREATE VIEW dbms_monitor.schema_weight AS
+select TABLE_SCHEMA,
+  sum(ifnull(`Data MB` + `Data_Free MB`, 0)) as DATA_MB,
+  sum(ifnull(`Data GB` + `Data_Free MB`, 0)) as DATA_GB,
+  sum(ifnull(`Index MB`, 0)) as INDEX_MB,
+  sum(ifnull(`Index GB`, 0)) as INDEX_GB,
+  sum(ifnull(`Total MB`, 0)) as TOTAL_MB,
+  sum(ifnull(`Total GB`, 0)) as TOTAL_GB,
+  sum(`Num Tables`) as TABLES_COUNT
+from dbms_monitor.schema_weight_by_engine
+group by TABLE_SCHEMA;
+
+DROP VIEW IF EXISTS dbms_monitor.instance_weight;
+CREATE VIEW dbms_monitor.instance_weight AS
+SELECT
+  sum(ifnull(`Data MB` + `Data_Free MB`, 0)) as DATA_MB,
+  sum(ifnull(`Data GB` + `Data_Free MB`, 0)) as DATA_GB,
+  sum(ifnull(`Index MB`, 0)) as INDEX_MB,
+  sum(ifnull(`Index GB`, 0)) as INDEX_GB,
+  dbms_monitor.check_innodb_log_size() INNODB_LOG_MB,
+  round(dbms_monitor.check_innodb_log_size()/1024, 2) INNODB_LOG_GB,
+  sum(ifnull(`Total MB`, 0)) + dbms_monitor.check_innodb_log_size() as TOTAL_MB,
+  sum(ifnull(`Total GB`, 0)) + round(dbms_monitor.check_innodb_log_size()/1024, 2) as TOTAL_GB,
+  sum(`Num Tables`) as TABLES_COUNT
+from dbms_monitor.schema_weight_by_engine;
+	
+DROP VIEW IF EXISTS dbms_monitor.index_info;
+CREATE VIEW dbms_monitor.index_info AS
+   SELECT
+        TABLE_SCHEMA,
+        TABLE_NAME,
+        INDEX_NAME,
+        NON_UNIQUE,
+        GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) AS IDX_PREFIX
+    FROM
+        information_schema.STATISTICS
+    WHERE TABLE_SCHEMA NOT IN ('mysql', 'sys', 'INFORMATION_SCHEMA', 'PERFORMANCE_SCHEMA')
+    AND INDEX_TYPE='BTREE'
+    GROUP BY
+        TABLE_SCHEMA,
+        TABLE_NAME,
+        INDEX_NAME,
+        NON_UNIQUE;
+
+DROP VIEW IF EXISTS dbms_monitor.index_overhead;
+CREATE VIEW dbms_monitor.index_overhead as
+SELECT
+    CONCAT('The B-Tree NOT UNIQUE index ', idx1.IDX_PREFIX, ' is prefix of the composed index ', idx2.INDEX_NAME) AS Message,
+    CONCAT(idx1.TABLE_SCHEMA, '.', idx1.TABLE_NAME) AS FULL_TABLE_NAME,
+    idx1.INDEX_NAME,
+    idx1.IDX_PREFIX,
+    idx2.INDEX_NAME AS COMPOSED_INDEX_NAME,
+    idx2.IDX_PREFIX AS COMPOSED_IDX_PREFIX
+FROM dbms_monitor.index_info AS idx1
+    INNER JOIN dbms_monitor.index_info AS idx2
+    USING (TABLE_SCHEMA, TABLE_NAME)
+    WHERE idx1.NON_UNIQUE = 1 AND idx1.IDX_PREFIX != idx2.IDX_PREFIX AND LOCATE(CONCAT(idx1.IDX_PREFIX, ','), idx2.IDX_PREFIX) = 1
+;
+
