@@ -393,3 +393,28 @@ FROM dbms_monitor.index_info AS idx1
     WHERE idx1.NON_UNIQUE = 1 AND idx1.IDX_PREFIX != idx2.IDX_PREFIX AND LOCATE(CONCAT(idx1.IDX_PREFIX, ','), idx2.IDX_PREFIX) = 1
 ;
 
+DROP VIEW IF EXISTS dbms_monitor.tables_with_primary;
+CREATE VIEW dbms_monitor.tables_with_primary AS
+ SELECT t.TABLE_SCHEMA, t.TABLE_NAME
+  FROM information_schema.COLUMNS c
+    JOIN information_schema.TABLES t USING (TABLE_SCHEMA, TABLE_NAME)
+  WHERE t.TABLE_SCHEMA not in ('mysql','sys','INFORMATION_SCHEMA','PERFORMANCE_SCHEMA')
+  AND c.COLUMN_KEY='PRI'
+  GROUP BY t.TABLE_SCHEMA, t.TABLE_NAME;
+
+DROP VIEW IF EXISTS dbms_monitor.tables_without_primary;
+CREATE VIEW dbms_monitor.tables_without_primary AS
+SELECT
+    t2.TABLE_SCHEMA,
+    t2.TABLE_NAME,
+    t2.ENGINE
+FROM information_schema.TABLES t2
+  LEFT JOIN dbms_monitor.tables_with_primary t USING(TABLE_SCHEMA, TABLE_NAME)
+WHERE t2.TABLE_SCHEMA not in ('mysql','sys','INFORMATION_SCHEMA','PERFORMANCE_SCHEMA')
+AND t2.TABLE_TYPE = 'BASE TABLE'
+AND t.TABLE_SCHEMA IS NULL
+GROUP BY
+    t2.TABLE_SCHEMA,
+    t2.TABLE_NAME,
+    t2.ENGINE
+;
