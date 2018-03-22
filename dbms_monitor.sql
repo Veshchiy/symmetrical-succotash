@@ -416,5 +416,43 @@ AND t.TABLE_SCHEMA IS NULL
 GROUP BY
     t2.TABLE_SCHEMA,
     t2.TABLE_NAME,
-    t2.ENGINE
-;
+    t2.ENGINE;
+	
+DROP VIEW IF EXISTS dbms_monitor.tables_with_autoinc;
+CREATE VIEW dbms_monitor.tables_with_autoinc AS
+  SELECT
+  t.TABLE_SCHEMA,
+  t.TABLE_NAME,
+  c.COLUMN_NAME,
+  c.DATA_TYPE,
+  c.COLUMN_TYPE,
+  c.EXTRA,
+  t.AUTO_INCREMENT,
+(CASE c.DATA_TYPE
+   WHEN 'tinyint' THEN 255
+   WHEN 'smallint' THEN 65535
+   WHEN 'mediumint' THEN 16777215
+   WHEN 'int' THEN 4294967295
+   WHEN 'bigint' THEN 18446744073709551615
+END >> if(LOCATE('unsigned', c.COLUMN_TYPE) > 0, 0, 1)) as MAX_VALUE
+FROM information_schema.TABLES t
+  INNER JOIN information_schema.COLUMNS c USING(TABLE_SCHEMA, TABLE_NAME)
+WHERE 1=1
+AND c.EXTRA = 'auto_increment'
+AND c.DATA_TYPE in ('tinyint', 'smallint', 'int', 'mediumint', 'bigint')
+AND t.TABLE_SCHEMA NOT IN  ('mysql', 'information_schema', 'performance_schema','sys')
+order by t.AUTO_INCREMENT desc;
+
+DROP VIEW IF EXISTS dbms_monitor.autoinc_fill_pct;
+CREATE VIEW dbms_monitor.autoinc_fill_pct AS
+SELECT t.TABLE_SCHEMA,
+  t.TABLE_NAME,
+  t.COLUMN_NAME,
+  t.DATA_TYPE,
+  t.COLUMN_TYPE,
+  t.AUTO_INCREMENT,
+  t.MAX_VALUE,
+  t.AUTO_INCREMENT/t.MAX_VALUE *100 as FILL_PCT
+FROM dbms_monitor.tables_with_autoinc t
+WHERE round(t.AUTO_INCREMENT/t.MAX_VALUE *100, 2) <> 0
+ORDER BY FILL_PCT DESC;
