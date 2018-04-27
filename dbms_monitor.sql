@@ -5,8 +5,8 @@ DELIMITER ;;
 DROP PROCEDURE IF EXISTS dbms_monitor.calc_per_thread_buffers;;
 CREATE PROCEDURE dbms_monitor.calc_per_thread_buffers()
   BEGIN
-    -- We will use following theary:
-    -- (read_buffer + read_rnd_buffer + sort_buffer + join buffer ) + max_sessions
+    -- We will use following theory:
+    -- (read_buffer + read_rnd_buffer + sort_buffer + join buffer ) * max_sessions = <memory usage for all sessions>
     DECLARE v_read_buffer, v_join_buffer, v_sort_buffer, v_read_rnd_buffer, v_max_connctions, result, v_thread_stack, v_bin_log_cache BIGINT;
 
     SELECT VARIABLE_VALUE INTO v_read_buffer FROM information_schema.GLOBAL_VARIABLES WHERE VARIABLE_NAME = 'READ_BUFFER_SIZE';
