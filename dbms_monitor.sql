@@ -262,19 +262,24 @@ END;
 DELIMITER ;
 
 DROP VIEW IF EXISTS dbms_monitor.session_wait_duration;
-CREATE VIEW dbms_monitor.session_wait_duration AS
-SELECT p.user,
-      LEFT(p.HOST, LOCATE(':', p.HOST) - 1) host, p.id,
-      TIMESTAMPDIFF(SECOND, t.TRX_STARTED, NOW()) duration,
-      COUNT(DISTINCT ot.REQUESTING_TRX_ID) waiting
-    FROM information_schema.INNODB_TRX t
-    JOIN information_schema.PROCESSLIST p
-      ON ( p.ID = t.TRX_MYSQL_THREAD_ID )
-    LEFT JOIN information_schema.INNODB_LOCK_WAITS ot
-      ON ( ot.BLOCKING_TRX_ID = t.TRX_id )
-    WHERE t.TRX_STARTED + INTERVAL dbms_monitor.f_threshold() SECOND <= NOW()
-    GROUP BY LEFT(p.HOST, LOCATE(':', p.HOST) - 1), p.id, duration
-    HAVING duration >= dbms_monitor.f_threshold() OR waiting > 0;
+create view session_wait_duration as
+  select
+    `p`.`USER`                                      AS `user`,
+    left(`p`.`HOST`, (locate(':', `p`.`HOST`) - 1)) AS `host`,
+    `p`.`ID`                                        AS `id`,
+    case
+        when `p`.TIME > 60 then concat(`p`.TIME/60, ' min')
+        when `p`.TIME > 3600 then concat(`p`.TIME/60/60, ' hours')
+        else concat(`p`.TIME, ' secs') end
+    AS `query_time`,
+    timestampdiff(SECOND, `t`.`trx_started`, now()) AS `trx_duration`,
+    count(distinct `ot`.`requesting_trx_id`)        AS `trx_waiting_count`
+  from `information_schema`.`PROCESSLIST` `p`
+    left join `information_schema`.`INNODB_TRX` `t` on ((`p`.`ID` = `t`.`trx_mysql_thread_id`))
+    left join `information_schema`.`INNODB_LOCK_WAITS` `ot` on ((`ot`.`blocking_trx_id` = `t`.`trx_id`))
+  where ((`t`.`trx_started` + interval ifnull(`dbms_monitor`.`f_threshold`(), 0) second) <= now())
+  group by left(`p`.`HOST`, (locate(':', `p`.`HOST`) - 1)), `p`.`ID`, timestampdiff(SECOND, `t`.`trx_started`, now())
+  having ((`trx_duration` >= ifnull(`dbms_monitor`.`f_threshold`(), 0)) or (`trx_waiting_count` > 0));
 
 
 -- set @threshold = 10;
