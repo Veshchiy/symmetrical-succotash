@@ -62,5 +62,28 @@ CREATE PROCEDURE dbms_control.shrink_database(v_schema_name varchar(64))
       FETCH tables_cur INTO v_table_name;
     END WHILE;
   END;;
-  
+ 
+DROP PROCEDURE IF EXISTS dbms_control.move_tables;
+CREATE PROCEDURE dbms_control.move_tables(in schema_from varchar(64),  in schema_to varchar(64))
+  BEGIN
+    DECLARE cursor_end CONDITION FOR SQLSTATE '02000';
+    DECLARE done INT DEFAULT 0;
+    declare v_tabname varchar(64);
+    declare rtabs_cur cursor for select table_name from information_schema.TABLES where TABLE_SCHEMA = schema_from;
+    DECLARE CONTINUE HANDLER FOR cursor_end SET done = 1;
+
+    SET done = 0;
+    OPEN rtabs_cur;
+    FETCH rtabs_cur INTO v_tabname;
+    WHILE NOT done DO
+      SET @sql = CONCAT('rename table ',schema_from,'.', v_tabname, ' to ',schema_to,'.', v_tabname);
+      PREPARE stmt FROM @sql;
+  		EXECUTE stmt;
+      DEALLOCATE PREPARE stmt;
+      FETCH rtabs_cur INTO v_tabname;
+    END WHILE;
+    CLOSE rtabs_cur;
+
+  END;;
+ 
 DELIMITER ;
